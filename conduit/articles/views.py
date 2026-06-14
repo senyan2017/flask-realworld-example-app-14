@@ -120,6 +120,63 @@ def articles_feed(limit=20, offset=0):
         order_by(Article.createdAt.desc()).offset(offset).limit(limit).all()
 
 
+def find_related_articles(article, limit=5):
+    """Return articles related to ``article`` ranked deterministically.
+
+    Ranking priority (all descending):
+        1. number of shared tags -- the more tags in common, the higher
+        2. same author as the source article
+        3. most recently created
+        4. id, as a final stable tie-breaker
+
+    The source article itself is never included, and ``limit`` caps how many
+    related articles come back so the "you might also like" entry point stays
+    focused instead of dumping the whole table.
+    """
+    tag_ids = {tag.id for tag in article.tagList}
+
+    # Keyed by id so an article matched by both tag and author is only kept once.
+    candidates = {}
+
+    if tag_ids:
+        tagged = Article.query \
+            .filter(Article.id != article.id) \
+            .filter(Article.tagList.any(Tags.id.in_(tag_ids))) \
+            .all()
+        for candidate in tagged:
+            candidates[candidate.id] = candidate
+
+    authored = Article.query \
+        .filter(Article.id != article.id) \
+        .filter(Article.author_id == article.author_id) \
+        .all()
+    for candidate in authored:
+        candidates[candidate.id] = candidate
+
+    def rank(candidate):
+        shared_tags = len(tag_ids & {tag.id for tag in candidate.tagList})
+        same_author = 1 if candidate.author_id == article.author_id else 0
+        created_at = candidate.createdAt or dt.datetime.min
+        return (shared_tags, same_author, created_at, candidate.id)
+
+    ranked = sorted(candidates.values(), key=rank, reverse=True)
+
+    if limit is not None and limit >= 0:
+        ranked = ranked[:limit]
+    return ranked
+
+
+@blueprint.route('/api/articles/<slug>/related', methods=('GET',))
+@jwt_optional
+@use_kwargs({'limit': fields.Int()})
+@marshal_with(articles_schema)
+def get_related_articles(slug, limit=5):
+    article = Article.query.filter_by(slug=slug).first()
+    if not article:
+        raise InvalidUsage.article_not_found()
+    return find_related_articles(article, limit)
+
+
 ######
 # Tags
 ######
