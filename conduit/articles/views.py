@@ -6,10 +6,12 @@ from flask import Blueprint, jsonify
 from flask_apispec import marshal_with, use_kwargs
 from flask_jwt_extended import current_user, jwt_required, jwt_optional
 from marshmallow import fields
+from sqlalchemy import func
 
+from conduit.database import db
 from conduit.exceptions import InvalidUsage
 from conduit.user.models import User
-from .models import Article, Tags, Comment
+from .models import Article, Tags, Comment, tag_assoc
 from .serializers import (article_schema, articles_schema, comment_schema,
                           comments_schema)
 
@@ -83,6 +85,52 @@ def get_article(slug):
     if not article:
         raise InvalidUsage.article_not_found()
     return article
+
+
+@blueprint.route('/api/articles/<slug>/related', methods=('GET',))
+@jwt_optional
+@use_kwargs({'limit': fields.Int()}, location='querystring')
+@marshal_with(articles_schema)
+def get_related_articles(slug, limit=5):
+    article = Article.query.filter_by(slug=slug).first()
+    if not article:
+        raise InvalidUsage.article_not_found()
+
+    # Collect the tag ids attached to this article
+    tag_ids = [t.id for t in article.tagList]
+
+    results = []
+    if tag_ids:
+        # Primary: articles sharing at least one tag, ordered by how many
+        # tags they share (descending), then by recency (descending).
+        rows = (
+            db.session.query(Article)
+            .join(tag_assoc, Article.id == tag_assoc.c.article)
+            .filter(tag_assoc.c.tag.in_(tag_ids))
+            .filter(Article.id != article.id)
+            .group_by(Article.id)
+            .order_by(func.count(tag_assoc.c.tag).desc(),
+                      Article.createdAt.desc())
+            .limit(limit)
+            .all()
+        )
+        results = list(rows)
+
+    # Secondary fallback: fill remaining slots with articles by the same author
+    if len(results) < limit:
+        exclude_ids = [a.id for a in results]
+        exclude_ids.append(article.id)
+        author_articles = (
+            Article.query
+            .filter(Article.author_id == article.author_id)
+            .filter(~Article.id.in_(exclude_ids))
+            .order_by(Article.createdAt.desc())
+            .limit(limit - len(results))
+            .all()
+        )
+        results.extend(author_articles)
+
+    return results
 
 
 @blueprint.route('/api/articles/<slug>/favorite', methods=('POST',))
