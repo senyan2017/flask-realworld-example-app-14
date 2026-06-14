@@ -1,19 +1,25 @@
 # coding: utf-8
+"""Article CRUD routes.
+
+This module keeps only the four core article endpoints (list, create,
+update, delete, get-by-slug, and the authenticated feed).  Favorites,
+comments, and tags live in their own sibling modules and are pulled in
+via the imports at the bottom of this file so that a single
+``import conduit.articles.views`` registers every route on the shared
+blueprint.
+"""
 
 import datetime as dt
 
-from flask import Blueprint, jsonify
 from flask_apispec import marshal_with, use_kwargs
 from flask_jwt_extended import current_user, jwt_required, jwt_optional
 from marshmallow import fields
 
-from conduit.exceptions import InvalidUsage
 from conduit.user.models import User
-from .models import Article, Tags, Comment
-from .serializers import (article_schema, articles_schema, comment_schema,
-                          comments_schema)
-
-blueprint = Blueprint('articles', __name__)
+from .blueprints import blueprint
+from .models import Article, Tags
+from .serializers import article_schema, articles_schema
+from .utils import get_article_or_404, get_or_create_tag
 
 
 ##########
@@ -45,11 +51,7 @@ def make_article(body, title, description, tagList=None):
                       author=current_user.profile)
     if tagList is not None:
         for tag in tagList:
-            mtag = Tags.query.filter_by(tagname=tag).first()
-            if not mtag:
-                mtag = Tags(tag)
-                mtag.save()
-            article.add_tag(mtag)
+            article.add_tag(get_or_create_tag(tag))
     article.save()
     return article
 
@@ -59,9 +61,7 @@ def make_article(body, title, description, tagList=None):
 @use_kwargs(article_schema)
 @marshal_with(article_schema)
 def update_article(slug, **kwargs):
-    article = Article.query.filter_by(slug=slug, author_id=current_user.profile.id).first()
-    if not article:
-        raise InvalidUsage.article_not_found()
+    article = get_article_or_404(slug, author_id=current_user.profile.id)
     article.update(updatedAt=dt.datetime.utcnow(), **kwargs)
     article.save()
     return article
@@ -70,7 +70,7 @@ def update_article(slug, **kwargs):
 @blueprint.route('/api/articles/<slug>', methods=('DELETE',))
 @jwt_required
 def delete_article(slug):
-    article = Article.query.filter_by(slug=slug, author_id=current_user.profile.id).first()
+    article = get_article_or_404(slug, author_id=current_user.profile.id)
     article.delete()
     return '', 200
 
@@ -79,36 +79,7 @@ def delete_article(slug):
 @jwt_optional
 @marshal_with(article_schema)
 def get_article(slug):
-    article = Article.query.filter_by(slug=slug).first()
-    if not article:
-        raise InvalidUsage.article_not_found()
-    return article
-
-
-@blueprint.route('/api/articles/<slug>/favorite', methods=('POST',))
-@jwt_required
-@marshal_with(article_schema)
-def favorite_an_article(slug):
-    profile = current_user.profile
-    article = Article.query.filter_by(slug=slug).first()
-    if not article:
-        raise InvalidUsage.article_not_found()
-    article.favourite(profile)
-    article.save()
-    return article
-
-
-@blueprint.route('/api/articles/<slug>/favorite', methods=('DELETE',))
-@jwt_required
-@marshal_with(article_schema)
-def unfavorite_an_article(slug):
-    profile = current_user.profile
-    article = Article.query.filter_by(slug=slug).first()
-    if not article:
-        raise InvalidUsage.article_not_found()
-    article.unfavourite(profile)
-    article.save()
-    return article
+    return get_article_or_404(slug)
 
 
 @blueprint.route('/api/articles/feed', methods=('GET',))
@@ -120,49 +91,8 @@ def articles_feed(limit=20, offset=0):
         order_by(Article.createdAt.desc()).offset(offset).limit(limit).all()
 
 
-######
-# Tags
-######
-
-@blueprint.route('/api/tags', methods=('GET',))
-def get_tags():
-    return jsonify({'tags': [tag.tagname for tag in Tags.query.all()]})
-
-
-##########
-# Comments
-##########
-
-
-@blueprint.route('/api/articles/<slug>/comments', methods=('GET',))
-@marshal_with(comments_schema)
-def get_comments(slug):
-    article = Article.query.filter_by(slug=slug).first()
-    if not article:
-        raise InvalidUsage.article_not_found()
-    return article.comments
-
-
-@blueprint.route('/api/articles/<slug>/comments', methods=('POST',))
-@jwt_required
-@use_kwargs(comment_schema)
-@marshal_with(comment_schema)
-def make_comment_on_article(slug, body, **kwargs):
-    article = Article.query.filter_by(slug=slug).first()
-    if not article:
-        raise InvalidUsage.article_not_found()
-    comment = Comment(article, current_user.profile, body, **kwargs)
-    comment.save()
-    return comment
-
-
-@blueprint.route('/api/articles/<slug>/comments/<cid>', methods=('DELETE',))
-@jwt_required
-def delete_comment_on_article(slug, cid):
-    article = Article.query.filter_by(slug=slug).first()
-    if not article:
-        raise InvalidUsage.article_not_found()
-
-    comment = article.comments.filter_by(id=cid, author=current_user.profile).first()
-    comment.delete()
-    return '', 200
+# ---------------------------------------------------------------------------
+# Register routes from sibling modules so that importing this module is
+# sufficient to activate all articles-related endpoints.
+# ---------------------------------------------------------------------------
+from . import favorites, comments, tags  # noqa: E402, F401
