@@ -1,5 +1,6 @@
 # coding: utf-8
 
+from flask import g
 from marshmallow import Schema, fields, pre_load, post_dump
 
 from conduit.profile.serializers import ProfileSchema
@@ -44,7 +45,12 @@ class ArticleSchemas(ArticleSchema):
 
     @post_dump(pass_many=True)
     def dump_articles(self, data, many, **kwargs):
-        return {'articles': data, 'articlesCount': len(data)}
+        # ``articlesCount`` must reflect the total number of matching rows,
+        # not just the size of the current page. Views set ``g.articles_count``
+        # to the pre-limit/offset total; fall back to the page length when no
+        # total was provided (e.g. internal callers that don't paginate).
+        return {'articles': data,
+                'articlesCount': g.get('articles_count', len(data))}
 
 
 class CommentSchema(Schema):

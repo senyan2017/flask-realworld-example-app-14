@@ -9,7 +9,8 @@ USER_NOT_FOUND = template(['User not found'], code=404)
 USER_ALREADY_REGISTERED = template(['User already registered'], code=422)
 UNKNOWN_ERROR = template([], code=500)
 ARTICLE_NOT_FOUND = template(['Article not found'], code=404)
-COMMENT_NOT_OWNED = template(['Not your article'], code=422)
+COMMENT_NOT_FOUND = template(['Comment not found'], code=404)
+COMMENT_NOT_OWNED = template(['Not your comment'], code=422)
 
 
 class InvalidUsage(Exception):
@@ -41,6 +42,10 @@ class InvalidUsage(Exception):
     @classmethod
     def article_not_found(cls):
         return cls(**ARTICLE_NOT_FOUND)
+
+    @classmethod
+    def comment_not_found(cls):
+        return cls(**COMMENT_NOT_FOUND)
 
     @classmethod
     def comment_not_owned(cls):

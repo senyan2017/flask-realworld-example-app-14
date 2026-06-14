@@ -37,9 +37,11 @@ def register_extensions(app):
 def register_blueprints(app):
     """Register Flask blueprints."""
     origins = app.config.get('CORS_ORIGIN_WHITELIST', '*')
-    cors.init_app(user.views.blueprint, origins=origins)
-    cors.init_app(profile.views.blueprint, origins=origins)
-    cors.init_app(articles.views.blueprint, origins=origins)
+    # Apply CORS to the app rather than the (module-level, reused) blueprint
+    # objects: Flask 2.x forbids re-running blueprint setup methods such as
+    # ``after_request`` once a blueprint has been registered, which happens when
+    # ``create_app`` runs more than once (e.g. per test).
+    cors.init_app(app, origins=origins)
 
     app.register_blueprint(user.views.blueprint)
     app.register_blueprint(profile.views.blueprint)
